@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cloudwatch event rule and Lambda function to trigger scheduled CodePipeline approval
+
+#-------------------------------------------------------------------------------
+#--[ PARAMETERS ]---------------------------------------------------------------
+#-------------------------------------------------------------------------------
+
+Parameters:
+  Env:
+    Description: Environment name (dev/staging/preprod/prod)
+    Type: String
+
+  Prefix:
+    Description: Prefix to all resources
+    Type: String
+
+  PipelineName:
+    Description: Name of the Pipeline where the approval is
+    Type: String
+
+  StageName:
+    Description: Stage where the approval is needed
+    Type: String
+
+  ApprovalName:
+    Description: Name of the Approval to automatically validate
+    Type: String
+
+#-------------------------------------------------------------------------------
+#--[ RESOURCES ]----------------------------------------------------------------
+#-------------------------------------------------------------------------------
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile:
+          !Join
+            - ' '
+            - - 'var AWS = require("aws-sdk");'
+              - 'exports.handler = (event, context, callback) => {'
+              - '  var paramsGet = {'
+              - '    name: process.env.PIPELINE_NAME'
+              - '  };'
+              - '  var codepipeline = new AWS.CodePipeline();'
+              - '  codepipeline.getPipelineState(paramsGet, function(err, data) {'
+              - '    if (err) console.log(err, err.stack);'
+              - '    else {'
+              - '      if (data.stageStates.length > 0) {'
+              - '        var token = null;'
+              - '        for (let stage of data.stageStates) {'
+              - '          var stageName = stage.stageName;'
+              - '          if (stageName === process.env.STAGE_NAME) {'
+              - '            var actionStates = stage.actionStates;'
+              - '            for (let actionState of actionStates) {'
+              - '              var actionName = actionState.actionName;'
+              - '              if (actionName === process.env.APPROVAL_NAME) {'
+              - '                token = actionState.latestExecution.token;'
+              - '                break;'
+              - '              }'
+              - '            }'
+              - '          }'
+              - '        }'
+              - '        var paramsPut = {'
+              - '          actionName: process.env.APPROVAL_NAME,'
+              - '          pipelineName: process.env.PIPELINE_NAME,'
+              - '          result: {'
+              - '            status: "Approved",'
+              - '            summary: "Scheduled approval by Lambda."'
+              - '          },'
+              - '          stageName: process.env.STAGE_NAME,'
+              - '          token: token'
+              - '        };'
+              - '        if (token != null) {'
+              - '          codepipeline.putApprovalResult(paramsPut, function(err, data) {'
+              - '            if (err) console.log(err, err.stack);'
+              - '            else console.log(data);'
+              - '          });'
+              - '        }'
+              - '      }'
+              - '    }'
+              - '    callback(null, "Approved");'
+              - '  })'
+              - '};'
+      Description: Automatic CodePipeline Approval
+      Environment:
+        Variables:
+          PIPELINE_NAME: !Ref PipelineName
+          STAGE_NAME: !Ref StageName
+          APPROVAL_NAME: !Ref ApprovalName
+      FunctionName: AutomaticCodePipelineApproval
+      Handler: "index.handler"
+      Role: !GetAtt LambdaAutoApprovalServiceRole.Arn
+      Runtime: nodejs6.10
+
+  LambdaAutoApprovalServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": { "Service": [ "lambda.amazonaws.com" ]},
+                "Action": [ "sts:AssumeRole" ]
+            }]
+        }
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource:
+                  - arn:aws:logs:*:*:*
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - codepipeline:GetPipeline
+                  - codepipeline:GetPipelineState
+                  - codepipeline:GetPipelineExecution
+                  - codepipeline:ListPipelineExecutions
+                  - codepipeline:ListPipelines
+                  - codepipeline:PutApprovalResult
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Scheduled CodePipeline approval
+      ScheduleExpression: "cron(0 9 ? * MON *)"
+      State: ENABLED
+      Targets:
+        -
+          Arn:
+            Fn::GetAtt:
+              - "LambdaFunction"
+              - "Arn"
+          Id: LambdaAutomaticApproval
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+#-------------------------------------------------------------------------------
+#--[ OUTPUTS/EXPORT ]-----------------------------------------------------------
+#-------------------------------------------------------------------------------
+
+Outputs:
+  LambdaFunctionName:
+    Description: Name of Lambda AutoApproval function
+    Value: !Ref LambdaFunction
+    Export:
+      Name: !Sub ${Prefix}-${Env}-auto-approve-name
+
+  LambdaFunctionArn:
+    Description: ARN of Lambda AutoApproval function
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub ${Prefix}-${Env}-auto-approve-arn
+

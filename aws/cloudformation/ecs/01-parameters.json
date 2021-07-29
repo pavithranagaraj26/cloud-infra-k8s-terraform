@@ -1,0 +1,26 @@
+[
+  {
+    "ParameterKey": "ClusterMinSize",
+    "ParameterValue": "3"
+  },
+  {
+    "ParameterKey": "ClusterMaxSize",
+    "ParameterValue": "5"
+  },
+  {
+    "ParameterKey": "ClusterDesiredSize",
+    "ParameterValue": "3"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "m5.large"
+  },
+  {
+    "ParameterKey": "Prefix",
+    "ParameterValue": "Prefix"
+  },
+  {
+    "ParameterKey": "Env",
+    "ParameterValue": "prod"
+  }
+]
